@@ -1,0 +1,2 @@
+# lingoai
+plataforma de ensino
