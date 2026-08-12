@@ -20,6 +20,16 @@ Esta especificação define o produto inicial do LingoAI: uma plataforma onde o 
 
 Esta spec cobre apenas a primeira fatia vertical do produto: Nivelamento + Loop de Conversação/Exercícios básico, mas já especifica a arquitetura e o banco de dados completos, para que features futuras (fala, novos agentes, mobile) sejam extensões e não retrabalho (Constitution §4, §7, §17).
 
+## Clarifications
+
+### Session 2026-08-11
+
+- Q: Que elementos de gamificação devem existir nesta iteração para a avaliação de progressão do estudante? → A: Moderado — sistema de XP por atividade concluída, streak diário e badges de marcos pedagógicos, sem leaderboard/comparação social entre estudantes.
+- Q: Se o desempenho do estudante cair, o `LearnerProfile` pode regredir de nível? → A: Não — o nível nunca regride automaticamente; desempenho fraco aciona mais prática/reforço na mesma faixa, não perda de nível.
+- Q: Onde o estudante vê o feedback gamificado de progressão (XP/streak/badges)? → A: Feedback inline imediato após cada atividade, complementado por um painel de progresso persistente para consulta a qualquer momento.
+- Q: O que dispara o avanço de nível de uma habilidade? → A: Taxa de acerto sustentada numa janela recente de atividades (ex.: ≥80% nas últimas N atividades) — um erro isolado não reinicia o progresso; valor exato do limiar/janela fica para o Technical Plan.
+- Q: Se o estudante perder um dia sem completar nenhuma atividade, o streak zera ou existe tolerância? → A: Reset imediato — perder um dia sem atividade zera o streak, sem mecanismo de congelamento/tolerância nesta iteração.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Nivelamento inicial do estudante (Priority: P1)
@@ -53,6 +63,7 @@ Após o nivelamento, o estudante entra em um ciclo contínuo de conversação gu
 2. **Given** um estudante respondendo a um exercício, **When** ele envia sua resposta, **Then** recebe feedback pedagógico textual explicando o que estava certo/errado e como corrigir — não apenas uma pontuação.
 3. **Given** uma sequência de eventos de aprendizagem de um estudante, **When** alguém consulta por que ele está no nível atual, **Then** a explicação é reconstruível a partir de uma regra de domínio testável, e não apenas "a IA decidiu assim".
 4. **Given** uma conversa em andamento com o agente de conversação, **When** o estudante envia uma mensagem, **Then** recebe uma resposta adaptada ao seu nível corrente em tempo hábil para manter o ritmo da conversa.
+5. **Given** um estudante que acabou de concluir uma atividade, **When** o resultado é processado, **Then** ele vê imediatamente, na mesma tela, o XP ganho, o streak atualizado e qualquer badge desbloqueado, e pode consultar esse mesmo progresso depois em um painel dedicado.
 
 ---
 
@@ -80,6 +91,7 @@ A arquitetura de bastidores comprova, já nesta primeira fatia, que suporta múl
 - O que acontece se um sinal de avaliação do agente de IA for ambíguo ou conflitante para uma decisão de progressão? A regra de domínio de progressão deve ter um comportamento padrão definido (ex.: manter nível atual) em vez de propagar a ambiguidade como decisão arbitrária.
 - O que acontece se um estudante tentar pular diretamente para o loop de aprendizagem sem completar o nivelamento? O sistema deve impedir ou aplicar um nível padrão explícito e sinalizado como não verificado.
 - O que acontece se dois eventos de aprendizagem chegarem para a mesma atividade em rápida sucessão (ex.: duplo envio)? O evento deve ser tratado de forma idempotente, sem duplicar o efeito sobre o perfil do estudante.
+- O que acontece se um estudante tiver desempenho consistentemente fraco em um nível? O sistema não rebaixa o nível automaticamente (FR-9); em vez disso, direciona mais atividades de reforço na mesma faixa até o desempenho melhorar.
 
 ## Requirements *(mandatory)*
 
@@ -98,8 +110,16 @@ A arquitetura de bastidores comprova, já nesta primeira fatia, que suporta múl
 - **FR-6**: O sistema DEVE oferecer uma conversa contínua com o Conversation Agent, adaptada ao nível corrente do estudante.
 - **FR-7**: O sistema DEVE gerar exercícios de escrita, fala e audição consistentes com o nível e os gaps identificados no Perfil de Nivelamento.
 - **FR-8**: Cada exercício DEVE gerar feedback pedagógico (não apenas certo/errado), explicando o erro e sugerindo correção.
-- **FR-9**: O Progression Agent (ou motor de domínio equivalente) DEVE decidir a próxima atividade/nível com base em regras de domínio explícitas alimentadas pelos eventos de aprendizagem — a IA generativa fornece sinais (ex.: avaliação de uma resposta aberta), mas a decisão de progressão em si é uma regra de domínio auditável, não uma decisão opaca do LLM.
+- **FR-9**: O Progression Agent (ou motor de domínio equivalente) DEVE decidir a próxima atividade/nível com base em regras de domínio explícitas alimentadas pelos eventos de aprendizagem — a IA generativa fornece sinais (ex.: avaliação de uma resposta aberta), mas a decisão de progressão em si é uma regra de domínio auditável, não uma decisão opaca do LLM. O avanço de nível numa habilidade DEVE ser disparado por uma taxa de acerto sustentada numa janela das atividades mais recentes daquela habilidade (ex.: acerto igual ou acima de um limiar definido nas últimas N atividades) — não por uma sequência ininterrupta sem erros; um erro isolado dentro da janela não reinicia o progresso. O valor exato do limiar e do tamanho da janela é decisão do Technical Plan. O nível do estudante em cada habilidade NUNCA regride automaticamente: desempenho fraco sustentado DEVE acionar mais atividades de reforço na mesma faixa de nível, nunca um rebaixamento de nível.
 - **FR-10**: O sistema DEVE registrar cada interação relevante (resposta, correção, tempo gasto, tentativa) como um evento de aprendizagem imutável.
+
+**Gamificação da Progressão**
+
+- **FR-15**: O sistema DEVE conceder pontos de experiência (XP) ao estudante por cada atividade concluída (conversação ou exercício), com o valor de XP influenciado pelo desempenho registrado no `LearningEvent` correspondente.
+- **FR-16**: O sistema DEVE manter uma contagem de streak (sequência de dias consecutivos com pelo menos uma atividade concluída), visível ao estudante. O streak DEVE reiniciar para zero caso o estudante não conclua nenhuma atividade em um dia; não há mecanismo de tolerância/congelamento nesta iteração.
+- **FR-17**: O sistema DEVE conceder badges (selos) ao estudante ao atingir marcos pedagógicos definidos (ex.: primeira conversa concluída, primeiro nível avançado, streak de 7 dias), exibidos no perfil do estudante.
+- **FR-18**: XP, streak e badges são reforço motivacional e DEVEM ser derivados dos mesmos `LearningEvent` que alimentam a decisão de progressão (Constitution §12) — não constituem fonte de verdade paralela nem substituem a regra de domínio de progressão (FR-9). Comparação social entre estudantes (leaderboard/ranking) está fora do escopo desta iteração.
+- **FR-19**: O sistema DEVE exibir o ganho de XP, a atualização de streak e qualquer badge desbloqueado imediatamente após a conclusão de uma atividade (feedback inline), e DEVE também disponibilizar um painel de progresso persistente onde o estudante pode consultar XP total, streak atual e badges conquistados a qualquer momento.
 
 **Múltiplos Agentes**
 
@@ -130,10 +150,12 @@ A arquitetura de bastidores comprova, já nesta primeira fatia, que suporta múl
 - **User**: Conta do estudante — credenciais, preferências de idioma nativo, timezone.
 - **PlacementSession**: Uma sessão de nivelamento (status, início, conclusão).
 - **PlacementResult**: Resultado do nivelamento — nível estimado por habilidade (leitura, escrita, fala, audição), gerado ao final de uma `PlacementSession`.
-- **LearnerProfile**: Projeção do nível atual do estudante por habilidade e trilha ativa; derivada a partir do histórico de `LearningEvent` — não é a fonte primária da verdade.
+- **LearnerProfile**: Projeção do nível atual do estudante por habilidade e trilha ativa; derivada a partir do histórico de `LearningEvent`, incluindo a taxa de acerto na janela recente de atividades usada para decidir avanço de nível — não é a fonte primária da verdade.
 - **LearningPath / Unit / Activity**: Estrutura pedagógica — unidades e atividades disponíveis por nível/habilidade, usadas para sequenciar o loop de aprendizagem.
 - **ConversationSession / Message**: Uma conversa contínua com o Conversation Agent e suas mensagens (texto e, quando aplicável, referência a áudio).
 - **LearningEvent**: Evento imutável de aprendizagem (tipo, payload, timestamp, referência a usuário/atividade/sessão) — fonte de verdade para reconstruir o progresso do estudante; toda decisão de progressão deve ser rastreável até uma sequência de eventos.
+- **GamificationProfile**: Projeção do estado motivacional do estudante — XP total, streak atual (dias consecutivos) e badges conquistados; derivada do histórico de `LearningEvent`, da mesma forma que `LearnerProfile` (não é fonte primária).
+- **Badge**: Catálogo de marcos gamificados disponíveis (nome, critério de concessão) e seus registros de concessão a estudantes.
 - **AgentInvocationLog**: Registro de observabilidade de cada chamada a um agente de IA (agente, input resumido, output resumido, latência, provedor usado, sucesso/erro).
 
 ## Technology Choices *(mandatory per LingoAI Constitution §2, §6, §18)*
@@ -176,6 +198,7 @@ Regra geral: modular monolith no MVP, com fronteiras de módulo já desenhadas p
 - **SC-004**: O fluxo completo guiado (cadastro → nivelamento → primeira atividade) é executável de ponta a ponta em ambiente local, sem nenhuma dependência de infraestrutura de nuvem além da chamada ao provedor de IA.
 - **SC-005**: Uma resposta conversacional do sistema chega ao estudante em até ~3 segundos em condições normais de operação, preservando a fluidez da conversa.
 - **SC-006**: O provedor de IA usado por trás da conversação pode ser substituído sem alteração perceptível no comportamento do produto para o estudante.
+- **SC-007**: Após concluir qualquer atividade, o estudante vê imediatamente o XP ganho e o status atualizado do seu streak, sem precisar navegar para outra tela, e consegue revisitar esse mesmo progresso depois em um painel dedicado.
 
 ## Assumptions
 
@@ -183,7 +206,7 @@ Regra geral: modular monolith no MVP, com fronteiras de módulo já desenhadas p
 - A escala de nível (ex.: CEFR A1–C2 completa ou uma escala interna própria) será finalizada no Technical Plan; esta spec assume apenas que o nível é reportado por habilidade (leitura, escrita, fala, audição), não como um único nível global.
 - Nesta iteração, apenas 2–3 agentes são implementados (Assessment/Leveling, Conversation, Progression/Orchestrator); mais agentes especializados são extensões futuras permitidas pela arquitetura, não bloqueiam esta fatia.
 - Entrada/saída de áudio é uma capacidade de plataforma preparada nesta iteração (contratos/interfaces existem), mas sua implementação real ponta a ponta pode ser entregue em uma fatia seguinte.
-- Fora do escopo desta iteração, mas sem impedimento arquitetural futuro: aplicativo mobile nativo (PWA é aspiração futura), gamificação avançada, turmas/professores humanos, idiomas de ensino além do inglês, e deploy em nuvem.
+- Fora do escopo desta iteração, mas sem impedimento arquitetural futuro: aplicativo mobile nativo (PWA é aspiração futura), gamificação social/competitiva (leaderboard, ranking entre estudantes — ver Clarifications), turmas/professores humanos, idiomas de ensino além do inglês, e deploy em nuvem.
 - REST vs GraphQL para a API pública, provedor(es) específico(s) de IA generativa e de STT/TTS, estratégia de cache/sessão (ex.: Redis), e a estrutura exata de módulos dentro do monolito são decisões deliberadamente deixadas para o Technical Plan — não bloqueiam a aprovação desta spec.
 
 ## Technical Impact
@@ -226,3 +249,4 @@ Estas decisões são deliberadamente deixadas para a fase de Technical Plan (Con
 - Escala CEFR completa vs. escala interna própria para os níveis.
 - Estratégia de cache/sessão (ex.: Redis) — só entra se justificado.
 - Estrutura exata de módulos dentro do monolito (nomes de bounded contexts).
+- Valor exato do limiar de taxa de acerto e do tamanho da janela de atividades recentes usados na regra de avanço de nível (FR-9), e a fórmula exata de conversão de desempenho em XP (FR-15).
