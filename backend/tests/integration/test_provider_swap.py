@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from anthropic.types import ToolUseBlock
-from fastapi.testclient import TestClient
+from httpx import AsyncClient
 
 from ai_agents import adapter_factory
 from tests.conftest import PlacedStudent
@@ -32,15 +32,14 @@ def _auth_headers(token: str) -> dict[str, str]:
 
 class TestProviderSwap:
     async def test_response_contract_identical_across_local_and_anthropic(
-        self, client: TestClient, placed_student: PlacedStudent, monkeypatch: pytest.MonkeyPatch
+        self, client: AsyncClient, placed_student: PlacedStudent, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         headers = _auth_headers(placed_student.token)
-        conversation_id = client.post("/api/v1/conversations", headers=headers).json()[
-            "conversation_session_id"
-        ]
+        start_response = await client.post("/api/v1/conversations", headers=headers)
+        conversation_id = start_response.json()["conversation_session_id"]
 
         # --- AI_PROVIDER=local (default; LocalModelAdapter, no mocking needed) ---
-        local_response = client.post(
+        local_response = await client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
             headers=headers,
             json={"client_submission_id": str(uuid.uuid4()), "content_text": "Hello!"},
@@ -70,7 +69,7 @@ class TestProviderSwap:
             return_value=SimpleNamespace(content=[tool_use_block])
         )
 
-        anthropic_response = client.post(
+        anthropic_response = await client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
             headers=headers,
             json={"client_submission_id": str(uuid.uuid4()), "content_text": "Hello again!"},

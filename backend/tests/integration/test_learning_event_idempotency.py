@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi.testclient import TestClient
+from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from learning_content.infrastructure.seed import seed as seed_learning_content
@@ -25,22 +25,23 @@ def _auth_headers(token: str) -> dict[str, str]:
 
 class TestLearningEventIdempotency:
     async def test_duplicate_activity_answer_does_not_double_count_xp(
-        self, client: TestClient, db_session: AsyncSession, placed_student: PlacedStudent
+        self, client: AsyncClient, db_session: AsyncSession, placed_student: PlacedStudent
     ) -> None:
         await seed_learning_content(db_session)
         headers = _auth_headers(placed_student.token)
 
-        activity = client.get("/api/v1/activities/next", headers=headers).json()
+        activity_response = await client.get("/api/v1/activities/next", headers=headers)
+        activity = activity_response.json()
         submission_id = str(uuid.uuid4())
         payload = {
             "client_submission_id": submission_id,
             "response": {"text": "I go to school every day and study English with friends."},
         }
 
-        first = client.post(
+        first = await client.post(
             f"/api/v1/activities/{activity['activity_id']}/answers", headers=headers, json=payload
         )
-        second = client.post(
+        second = await client.post(
             f"/api/v1/activities/{activity['activity_id']}/answers", headers=headers, json=payload
         )
 
@@ -50,10 +51,11 @@ class TestLearningEventIdempotency:
         second_xp_total = second.json()["gamification_delta"]["xp_total"]
         assert first_xp_total == second_xp_total
 
-        profile = client.get("/api/v1/gamification/profile", headers=headers).json()
+        profile_response = await client.get("/api/v1/gamification/profile", headers=headers)
+        profile = profile_response.json()
         assert profile["xp_total"] == first_xp_total
 
-        history_response = client.get(
+        history_response = await client.get(
             "/api/v1/progression/profile/writing/history", headers=headers
         )
         events = history_response.json()["events"]
@@ -63,20 +65,19 @@ class TestLearningEventIdempotency:
         assert len(scored_events) == 1
 
     async def test_duplicate_conversation_message_does_not_double_count_xp(
-        self, client: TestClient, placed_student: PlacedStudent
+        self, client: AsyncClient, placed_student: PlacedStudent
     ) -> None:
         headers = _auth_headers(placed_student.token)
-        conversation_id = client.post("/api/v1/conversations", headers=headers).json()[
-            "conversation_session_id"
-        ]
+        start_response = await client.post("/api/v1/conversations", headers=headers)
+        conversation_id = start_response.json()["conversation_session_id"]
 
         submission_id = str(uuid.uuid4())
         payload = {"client_submission_id": submission_id, "content_text": "Hello there!"}
 
-        first = client.post(
+        first = await client.post(
             f"/api/v1/conversations/{conversation_id}/messages", headers=headers, json=payload
         )
-        second = client.post(
+        second = await client.post(
             f"/api/v1/conversations/{conversation_id}/messages", headers=headers, json=payload
         )
 

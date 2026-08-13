@@ -13,19 +13,21 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi.testclient import TestClient
+from httpx import AsyncClient
 
 from ai_agents.adapters.local_model_adapter import ASSESSMENT_TURNS_BEFORE_COMPLETE
 from identity.infrastructure.security import create_access_token
 
 
-def _register_and_authenticate(client: TestClient) -> tuple[str, str]:
+async def _register_and_authenticate(client: AsyncClient) -> tuple[str, str]:
     """Register a fresh user directly against the DB-backed auth flow and
     return (user_id, bearer_token). Bypasses /auth/login (also DB-backed,
     exercised separately by identity's own tests) to keep this test
     focused on the placement flow itself."""
     email = f"placement-{uuid.uuid4()}@example.com"
-    response = client.post("/api/v1/auth/register", json={"email": email, "password": "s3cret!!!"})
+    response = await client.post(
+        "/api/v1/auth/register", json={"email": email, "password": "s3cret!!!"}
+    )
     assert response.status_code == 201, response.text
     user_id = response.json()["user_id"]
     access_token, _ = create_access_token(uuid.UUID(user_id))
@@ -37,13 +39,13 @@ def _auth_headers(token: str) -> dict[str, str]:
 
 
 class TestPlacementFlow:
-    def test_full_placement_flow_produces_result_and_seeds_profiles(
-        self, client: TestClient
+    async def test_full_placement_flow_produces_result_and_seeds_profiles(
+        self, client: AsyncClient
     ) -> None:
-        _, token = _register_and_authenticate(client)
+        _, token = await _register_and_authenticate(client)
         headers = _auth_headers(token)
 
-        start_response = client.post("/api/v1/placement/sessions", headers=headers)
+        start_response = await client.post("/api/v1/placement/sessions", headers=headers)
         assert start_response.status_code == 201, start_response.text
         body = start_response.json()
         assert body["status"] == "in_progress"
@@ -52,7 +54,7 @@ class TestPlacementFlow:
 
         session_status = "in_progress"
         for turn in range(ASSESSMENT_TURNS_BEFORE_COMPLETE):
-            answer_response = client.post(
+            answer_response = await client.post(
                 f"/api/v1/placement/sessions/{session_id}/answers",
                 headers=headers,
                 json={
@@ -67,7 +69,7 @@ class TestPlacementFlow:
         assert session_status == "completed"
         assert answer_body["next_prompt"] is None
 
-        result_response = client.get(
+        result_response = await client.get(
             f"/api/v1/placement/sessions/{session_id}/result", headers=headers
         )
         assert result_response.status_code == 200, result_response.text
@@ -81,7 +83,7 @@ class TestPlacementFlow:
         assert result_body["strengths_summary"]
         assert result_body["weaknesses_summary"]
 
-        profile_response = client.get("/api/v1/progression/profile", headers=headers)
+        profile_response = await client.get("/api/v1/progression/profile", headers=headers)
         assert profile_response.status_code == 200, profile_response.text
         skills = {row["skill"]: row for row in profile_response.json()["skills"]}
         assert "reading" in skills
@@ -89,20 +91,22 @@ class TestPlacementFlow:
         assert skills["reading"]["mastery_score"] == 0
         assert skills["reading"]["cefr_level"] == result_body["reading_level"]
 
-    def test_duplicate_client_submission_id_is_idempotent(self, client: TestClient) -> None:
-        _, token = _register_and_authenticate(client)
+    async def test_duplicate_client_submission_id_is_idempotent(
+        self, client: AsyncClient
+    ) -> None:
+        _, token = await _register_and_authenticate(client)
         headers = _auth_headers(token)
 
-        start_response = client.post("/api/v1/placement/sessions", headers=headers)
+        start_response = await client.post("/api/v1/placement/sessions", headers=headers)
         session_id = start_response.json()["placement_session_id"]
 
         submission_id = str(uuid.uuid4())
-        first = client.post(
+        first = await client.post(
             f"/api/v1/placement/sessions/{session_id}/answers",
             headers=headers,
             json={"client_submission_id": submission_id, "content_text": "first send"},
         )
-        second = client.post(
+        second = await client.post(
             f"/api/v1/placement/sessions/{session_id}/answers",
             headers=headers,
             json={"client_submission_id": submission_id, "content_text": "first send"},
@@ -111,28 +115,30 @@ class TestPlacementFlow:
         assert second.status_code == 200
         assert first.json() == second.json()
 
-    def test_result_not_available_before_completion(self, client: TestClient) -> None:
-        _, token = _register_and_authenticate(client)
+    async def test_result_not_available_before_completion(self, client: AsyncClient) -> None:
+        _, token = await _register_and_authenticate(client)
         headers = _auth_headers(token)
 
-        start_response = client.post("/api/v1/placement/sessions", headers=headers)
+        start_response = await client.post("/api/v1/placement/sessions", headers=headers)
         session_id = start_response.json()["placement_session_id"]
 
-        result_response = client.get(
+        result_response = await client.get(
             f"/api/v1/placement/sessions/{session_id}/result", headers=headers
         )
         assert result_response.status_code == 409
 
-    def test_answers_on_someone_elses_session_returns_404(self, client: TestClient) -> None:
-        _, owner_token = _register_and_authenticate(client)
-        _, other_token = _register_and_authenticate(client)
+    async def test_answers_on_someone_elses_session_returns_404(
+        self, client: AsyncClient
+    ) -> None:
+        _, owner_token = await _register_and_authenticate(client)
+        _, other_token = await _register_and_authenticate(client)
 
-        start_response = client.post(
+        start_response = await client.post(
             "/api/v1/placement/sessions", headers=_auth_headers(owner_token)
         )
         session_id = start_response.json()["placement_session_id"]
 
-        response = client.post(
+        response = await client.post(
             f"/api/v1/placement/sessions/{session_id}/answers",
             headers=_auth_headers(other_token),
             json={"client_submission_id": str(uuid.uuid4()), "content_text": "intruder"},

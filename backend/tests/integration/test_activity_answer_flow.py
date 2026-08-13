@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi.testclient import TestClient
+from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from learning_content.infrastructure.seed import seed as seed_learning_content
@@ -25,18 +25,18 @@ def _auth_headers(token: str) -> dict[str, str]:
 
 class TestActivityAnswerFlow:
     async def test_submit_answer_records_event_and_returns_feedback(
-        self, client: TestClient, db_session: AsyncSession, placed_student: PlacedStudent
+        self, client: AsyncClient, db_session: AsyncSession, placed_student: PlacedStudent
     ) -> None:
         await seed_learning_content(db_session)
         headers = _auth_headers(placed_student.token)
 
-        next_response = client.get("/api/v1/activities/next", headers=headers)
+        next_response = await client.get("/api/v1/activities/next", headers=headers)
         assert next_response.status_code == 200, next_response.text
         activity = next_response.json()
         assert activity["type"] in ("writing_exercise", "speaking_exercise", "listening_exercise")
         assert activity["skill"] == "writing"  # only skill bootstrapped by a text-only placement
 
-        answer_response = client.post(
+        answer_response = await client.post(
             f"/api/v1/activities/{activity['activity_id']}/answers",
             headers=headers,
             json={
@@ -54,7 +54,7 @@ class TestActivityAnswerFlow:
 
         # AC-4: the scored answer is reconstructible from the LearningEvent
         # audit trail via the progression history endpoint.
-        history_response = client.get(
+        history_response = await client.get(
             "/api/v1/progression/profile/writing/history", headers=headers
         )
         assert history_response.status_code == 200, history_response.text
@@ -62,9 +62,9 @@ class TestActivityAnswerFlow:
         assert any(event["event_type"] == "exercise_answer_submitted" for event in events)
 
     async def test_answering_unknown_activity_returns_404(
-        self, client: TestClient, placed_student: PlacedStudent
+        self, client: AsyncClient, placed_student: PlacedStudent
     ) -> None:
-        response = client.post(
+        response = await client.post(
             f"/api/v1/activities/{uuid.uuid4()}/answers",
             headers=_auth_headers(placed_student.token),
             json={"client_submission_id": str(uuid.uuid4()), "response": {"text": "anything"}},

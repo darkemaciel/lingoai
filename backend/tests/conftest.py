@@ -10,9 +10,16 @@
   `docker compose up -d postgres`), any test that requests ``db_session``
   is SKIPPED rather than erroring, so pure unit-level tests (no DB) still
   run standalone.
-- ``client``: a FastAPI ``TestClient`` wired to reuse ``db_session`` via a
-  dependency override, so requests made through it see the same
-  transaction (and therefore the same rollback-based isolation).
+- ``client``: an ``httpx.AsyncClient`` (ASGI-transport, no real socket)
+  wired to reuse ``db_session`` via a dependency override, so requests made
+  through it see the same transaction (and therefore the same
+  rollback-based isolation). Deliberately *not* ``fastapi.testclient
+  .TestClient``: that class drives the ASGI app from a background thread
+  with its own event loop, so any asyncpg connection opened by
+  ``db_session`` (bound to the outer pytest-asyncio loop) would be used
+  from a different loop mid-request and raise "Future attached to a
+  different loop". Running the client in-loop via ``ASGITransport``
+  sidesteps that entirely.
 - ``local_model_adapter`` / ``null_audio_adapter``: ready-to-use
   deterministic agent-port adapters (NFR-7 — no live LLM/network calls in
   tests).
@@ -21,13 +28,13 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 
 import pytest
 import pytest_asyncio
 import sqlalchemy as sa
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from ai_agents.adapters.local_model_adapter import (
@@ -93,13 +100,14 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
         await engine.dispose()
 
 
-@pytest.fixture
-def client(db_session: AsyncSession) -> Generator[TestClient, None, None]:
+@pytest_asyncio.fixture
+async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     async def _override_get_db_session() -> AsyncGenerator[AsyncSession, None]:
         yield db_session
 
     app.dependency_overrides[get_db_session] = _override_get_db_session
-    with TestClient(app) as test_client:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as test_client:
         yield test_client
     app.dependency_overrides.pop(get_db_session, None)
 
@@ -136,24 +144,24 @@ class PlacedStudent:
     token: str
 
 
-@pytest.fixture
-def placed_student(client: TestClient) -> PlacedStudent:
+@pytest_asyncio.fixture
+async def placed_student(client: AsyncClient) -> PlacedStudent:
     """Registers a fresh user and drives their placement session to
     completion through the real API (bootstrapping `LearnerSkillProfile`/
     `GamificationProfile` rows per T029), returning credentials for the
     resulting placed student."""
     email = f"student-{uuid.uuid4()}@example.com"
-    register_response = client.post(
+    register_response = await client.post(
         "/api/v1/auth/register", json={"email": email, "password": "s3cret!!!"}
     )
     user_id = register_response.json()["user_id"]
     access_token, _ = create_access_token(uuid.UUID(user_id))
     headers = {"Authorization": f"Bearer {access_token}"}
 
-    start_response = client.post("/api/v1/placement/sessions", headers=headers)
+    start_response = await client.post("/api/v1/placement/sessions", headers=headers)
     session_id = start_response.json()["placement_session_id"]
     for turn in range(ASSESSMENT_TURNS_BEFORE_COMPLETE):
-        client.post(
+        await client.post(
             f"/api/v1/placement/sessions/{session_id}/answers",
             headers=headers,
             json={

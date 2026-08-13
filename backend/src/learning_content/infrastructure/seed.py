@@ -73,6 +73,12 @@ async def seed(session: AsyncSession) -> None:
                 name=f"{skill.value.capitalize()} {level.value} — Unit 1",
             )
             session.add(unit)
+            # `Unit`/`Activity` have no ORM `relationship()` between them
+            # (models.py: plain FK columns only), so the unit-of-work has no
+            # dependency edge telling it to INSERT units before activities —
+            # flush explicitly to guarantee `unit.id` exists before the
+            # activities referencing it are added.
+            await session.flush()
 
             for difficulty in _DIFFICULTY_BANDS:
                 session.add(
