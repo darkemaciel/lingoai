@@ -6,6 +6,9 @@ export default function HomePage() {
       <h1>LingoAI</h1>
       <p>Aprenda um novo idioma com um percurso guiado por IA, do nivelamento à prática diária.</p>
       <Link href="/register">Começar</Link>
+      <p>
+        Já tem uma conta? <Link href="/login">Entrar</Link>
+      </p>
     </main>
   );
 }
